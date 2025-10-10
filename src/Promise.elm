@@ -1,23 +1,72 @@
-module Promise exposing (..)
+module Promise exposing
+    ( Promise, succeed, fail, fromState
+    , cmdWhenEmpty, cmdWhenEmptyInDict
+    , map, andThen, andMap, map2, map3, map4, combine
+    , mapMsg, mapError
+    , nothingOnError, nothingOnErrorIf, toResult, toState
+    , whenPending, whenError, recover
+    , withModel, embedModel
+    , whenResolved, update, runWith, run
+    )
+
+{-|
+
+
+## A Promise type for managing asynchronous effects in Elm
+
+@docs Promise, succeed, fail, fromState
+
+
+## Create effectful promises
+
+@docs cmdWhenEmpty, cmdWhenEmptyInDict
+
+
+## Map and chain promises
+
+@docs map, andThen, andMap, map2, map3, map4, combine
+
+
+## Transform messages, errors, and states
+
+@docs mapMsg, mapError
+
+
+## Extract
+
+@docs nothingOnError, nothingOnErrorIf, toResult, toState
+
+
+## Handle specific states
+
+@docs whenPending, whenError, recover
+
+
+## Working with the Model
+
+@docs withModel, embedModel
+
+
+## Run updates when a promise resolves
+
+@docs whenResolved, update, runWith, run
+
+-}
 
 import Dict exposing (Dict)
 import Promise.State as State exposing (State(..))
 
 
+
+-- PROMISE
+
+
+{-| -}
 type Promise model msg e a
     = Promise (model -> ( State e a, ( model, Cmd msg ) ))
 
 
-unwrapPromise : Promise model msg e a -> (model -> ( State e a, ( model, Cmd msg ) ))
-unwrapPromise (Promise p) =
-    p
-
-
-withModel : (model -> Promise model msg e a) -> Promise model msg e a
-withModel f =
-    Promise (\m -> unwrapPromise (f m) m)
-
-
+{-| -}
 succeed : a -> Promise model msg e a
 succeed a =
     Promise
@@ -26,6 +75,7 @@ succeed a =
         )
 
 
+{-| -}
 fail : e -> Promise model msg e a
 fail error =
     Promise
@@ -34,6 +84,7 @@ fail error =
         )
 
 
+{-| -}
 fromState : State e a -> Promise model msg e a
 fromState state =
     Promise
@@ -42,6 +93,11 @@ fromState state =
         )
 
 
+
+-- PERFORM EFFECTS WHEN A STATE IS EMPTY
+
+
+{-| -}
 cmdWhenEmpty :
     (model -> State e a)
     -> (State e a -> model -> model)
@@ -101,6 +157,7 @@ cmdWhenEmpty get set (Promise getCmd) =
         )
 
 
+{-| -}
 cmdWhenEmptyInDict :
     comparable
     -> (model -> Dict comparable (State e a))
@@ -114,6 +171,13 @@ cmdWhenEmptyInDict key get set getCmd =
         getCmd
 
 
+{-| -}
+withModel : (model -> Promise model msg e a) -> Promise model msg e a
+withModel f =
+    Promise (\m -> unwrap (f m) m)
+
+
+{-| -}
 mapMsg : (msg1 -> msg2) -> Promise model msg1 e a -> Promise model msg2 e a
 mapMsg mapFun (Promise promise) =
     Promise
@@ -127,6 +191,7 @@ mapMsg mapFun (Promise promise) =
         )
 
 
+{-| -}
 mapError : (e1 -> e2) -> Promise model msg e1 a -> Promise model msg e2 a
 mapError f (Promise promise) =
     Promise
@@ -156,32 +221,12 @@ mapError f (Promise promise) =
         )
 
 
-withState : Promise model msg e a -> Promise model msg x (State e a)
-withState (Promise promise) =
-    Promise
-        (\model1 ->
-            let
-                -- ( State e a, ( model, Cmd msg ) ) =
-                ( state, ( model2, cmd ) ) =
-                    promise model1
-            in
-            ( case state of
-                Pending _ ->
-                    Pending (Just state)
-
-                _ ->
-                    Done state
-            , ( model2, cmd )
-            )
-        )
-
-
+{-| -}
 whenPending : a -> Promise model msg e a -> Promise model msg e a
 whenPending a (Promise promise) =
     Promise
         (\model1 ->
             let
-                -- ( State e a, ( model, Cmd msg ) )
                 ( state, ( model2, cmd ) ) =
                     promise model1
             in
@@ -194,12 +239,12 @@ whenPending a (Promise promise) =
         )
 
 
-whenError : (e -> a) -> Promise model msg e a -> Promise model msg x a
+{-| -}
+whenError : (e -> a) -> Promise model msg e a -> Promise model msg xx a
 whenError errorToA (Promise promise) =
     Promise
         (\model1 ->
             let
-                -- ( State e a, ( model, Cmd msg ) ) =
                 ( state, ( model2, cmd ) ) =
                     promise model1
             in
@@ -221,16 +266,58 @@ whenError errorToA (Promise promise) =
         )
 
 
-errorToResult : Promise model msg e a -> Promise model msg x (Result e a)
-errorToResult =
-    map Ok >> whenError Err
+
+-- EXTRACT
 
 
-optional : Promise model msg e a -> Promise model msg x (Maybe a)
-optional =
+{-| -}
+nothingOnError : Promise model msg e a -> Promise model msg xx (Maybe a)
+nothingOnError =
     map Just >> whenError (always Nothing)
 
 
+{-| -}
+nothingOnErrorIf : (e -> Bool) -> Promise model msg e a -> Promise model msg e (Maybe a)
+nothingOnErrorIf isIgnorable =
+    map Just
+        >> recover
+            (\e ->
+                if isIgnorable e then
+                    succeed Nothing
+
+                else
+                    fail e
+            )
+
+
+{-| -}
+toResult : Promise model msg e a -> Promise model msg xx (Result e a)
+toResult =
+    map Ok >> whenError Err
+
+
+{-| -}
+toState : Promise model msg e a -> Promise model msg xx (State e a)
+toState (Promise promise) =
+    Promise
+        (\model1 ->
+            let
+                -- ( State e a, ( model, Cmd msg ) ) =
+                ( state, ( model2, cmd ) ) =
+                    promise model1
+            in
+            ( case state of
+                Pending _ ->
+                    Pending (Just state)
+
+                _ ->
+                    Done state
+            , ( model2, cmd )
+            )
+        )
+
+
+{-| -}
 recover : (e -> Promise model msg x a) -> Promise model msg e a -> Promise model msg x a
 recover recoverWith (Promise promise) =
     Promise
@@ -255,7 +342,7 @@ recover recoverWith (Promise promise) =
                 Error e ->
                     let
                         ( st1, ( m2, cmd2 ) ) =
-                            unwrapPromise (recoverWith e) model2
+                            unwrap (recoverWith e) model2
                     in
                     ( st1, ( m2, Cmd.batch [ cmd, cmd2 ] ) )
         )
@@ -263,12 +350,12 @@ recover recoverWith (Promise promise) =
 
 {-| Use with promises for nested models
 -}
-mapModel :
+embedModel :
     (outerModel -> innerModel)
     -> (innerModel -> outerModel -> outerModel)
     -> Promise innerModel msg e a
     -> Promise outerModel msg e a
-mapModel get set (Promise promise) =
+embedModel get set (Promise promise) =
     Promise
         (\model1 ->
             let
@@ -279,6 +366,7 @@ mapModel get set (Promise promise) =
         )
 
 
+{-| -}
 map : (a -> b) -> Promise model msg e a -> Promise model msg e b
 map mapFun (Promise promise) =
     Promise
@@ -311,6 +399,7 @@ map mapFun (Promise promise) =
         )
 
 
+{-| -}
 andThen :
     (a -> Promise model msg e b)
     -> Promise model msg e a
@@ -319,16 +408,14 @@ andThen andThenFun (Promise promise) =
     Promise
         (\model0 ->
             let
-                -- ( State e a, ( model, Cmd msg ) ) =
                 ( state1, ( model1, cmd1 ) ) =
                     promise model0
 
                 next : a -> ( State e b, ( model, Cmd msg ) )
                 next a =
                     let
-                        -- ( State e a, ( model, Cmd msg ) ) =
                         ( state2, ( model2, cmd2 ) ) =
-                            unwrapPromise (andThenFun a) model1
+                            unwrap (andThenFun a) model1
                     in
                     ( state2, ( model2, Cmd.batch [ cmd1, cmd2 ] ) )
             in
@@ -353,6 +440,7 @@ andThen andThenFun (Promise promise) =
         )
 
 
+{-| -}
 andMap :
     Promise model msg e a
     -> Promise model msg e (a -> b)
@@ -361,11 +449,9 @@ andMap (Promise promise1) (Promise promise2) =
     Promise
         (\model0 ->
             let
-                -- ( State e a, ( model, Cmd msg ) ) =
                 ( state1, ( model1, cmd1 ) ) =
                     promise1 model0
 
-                -- ( State e (a -> b), ( model, Cmd msg ) ) =
                 ( state2, ( model2, cmd2 ) ) =
                     promise2 model1
 
@@ -427,6 +513,7 @@ andMap (Promise promise1) (Promise promise2) =
         )
 
 
+{-| -}
 map2 :
     (a -> b -> c)
     -> Promise model msg e a
@@ -438,6 +525,7 @@ map2 mapFun promise1 promise2 =
         |> andMap promise2
 
 
+{-| -}
 map3 :
     (a -> b -> c -> d)
     -> Promise model msg e a
@@ -451,6 +539,7 @@ map3 mapFun promise1 promise2 promise3 =
         |> andMap promise3
 
 
+{-| -}
 map4 :
     (a -> b -> c -> d -> e)
     -> Promise model msg err a
@@ -466,11 +555,13 @@ map4 mapFun promise1 promise2 promise3 promise4 =
         |> andMap promise4
 
 
+{-| -}
 combine : List (Promise model msg e a) -> Promise model msg e (List a)
 combine =
     List.foldr (map2 (::)) (succeed [])
 
 
+{-| -}
 whenResolved :
     (Result e a -> model -> ( model, Cmd msg ))
     -> Promise model msg e a
@@ -479,7 +570,6 @@ whenResolved mapFun (Promise promise) =
     Promise
         (\model0 ->
             let
-                -- ( State e a, ( model, Cmd msg ) ) =
                 ( state, ( model1, cmd1 ) ) =
                     promise model0
             in
@@ -492,7 +582,6 @@ whenResolved mapFun (Promise promise) =
 
                 Pending (Just a) ->
                     let
-                        -- ( model, Cmd msg )
                         ( model2, cmd2 ) =
                             mapFun (Ok a) model1
                     in
@@ -500,7 +589,6 @@ whenResolved mapFun (Promise promise) =
 
                 Stale a ->
                     let
-                        -- ( model, Cmd msg )
                         ( model2, cmd2 ) =
                             mapFun (Ok a) model1
                     in
@@ -508,7 +596,6 @@ whenResolved mapFun (Promise promise) =
 
                 Done a ->
                     let
-                        -- ( model, Cmd msg )
                         ( model2, cmd2 ) =
                             mapFun (Ok a) model1
                     in
@@ -516,7 +603,6 @@ whenResolved mapFun (Promise promise) =
 
                 Error e ->
                     let
-                        -- ( model, Cmd msg )
                         ( model2, cmd2 ) =
                             mapFun (Err e) model1
                     in
@@ -524,6 +610,7 @@ whenResolved mapFun (Promise promise) =
         )
 
 
+{-| -}
 update :
     (State e a -> model -> ( model, Cmd msg ))
     -> Promise model msg e a
@@ -542,6 +629,7 @@ update updateFun (Promise promise) =
         )
 
 
+{-| -}
 runWith :
     model
     -> Promise model msg Never ()
@@ -550,6 +638,7 @@ runWith model promise =
     run promise model
 
 
+{-| -}
 run :
     Promise model msg Never ()
     -> model
@@ -562,191 +651,6 @@ run (Promise promise) model1 =
     ( model2, cmd )
 
 
-runQueue :
-    List q
-    -> (q -> Promise model msg Never ())
-    -> model
-    -> ( List q, ( model, Cmd msg ) )
-runQueue queue makePromise model =
-    List.foldl
-        (\q ( qs, ( m1, cmds ) ) ->
-            let
-                ( s, ( m2, cmd ) ) =
-                    unwrapPromise (makePromise q) m1
-            in
-            case s of
-                Done _ ->
-                    ( qs, ( m2, cmd :: cmds ) )
-
-                _ ->
-                    ( q :: qs, ( m2, cmd :: cmds ) )
-        )
-        ( [], ( model, [] ) )
-        queue
-        |> Tuple.mapSecond (Tuple.mapSecond Cmd.batch)
-
-
-type Queue request err response
-    = Queue
-        { queued : Dict String request
-        , pending : Dict String request
-        , responses : Dict String (State err response)
-        }
-
-
-queue_init : Queue request err response
-queue_init =
-    Queue
-        { queued = Dict.empty
-        , pending = Dict.empty
-        , responses = Dict.empty
-        }
-
-
-queue_add : String -> request -> Queue request err response -> Queue request err response
-queue_add id request (Queue queue) =
-    case Dict.get id queue.responses of
-        Just (Pending Nothing) ->
-            Queue queue
-
-        _ ->
-            Queue
-                { queue
-                    | queued = Dict.insert id request queue.queued
-                    , responses = Dict.insert id (Pending Nothing) queue.responses
-                }
-
-
-queue_gotResponse : String -> Result err response -> Queue request err response -> Queue request err response
-queue_gotResponse id result (Queue queue) =
-    Queue
-        { queue
-            | responses =
-                Dict.insert id
-                    (case result of
-                        Ok response ->
-                            Done response
-
-                        Err err ->
-                            Error err
-                    )
-                    queue.responses
-            , queued = Dict.remove id queue.queued
-            , pending = Dict.remove id queue.pending
-        }
-
-
-queue_state : String -> Queue request err response -> State err response
-queue_state id (Queue queue) =
-    case Dict.get id queue.responses of
-        Just response ->
-            response
-
-        Nothing ->
-            Empty
-
-
-queue_runConcurrent :
-    (request -> Promise model msg err (Cmd msg))
-    -> Queue request err response
-    -> model
-    -> ( Queue request err response, ( model, Cmd msg ) )
-queue_runConcurrent makeCmd (Queue queue) model =
-    let
-        ( nextQueue, m4, cmds1 ) =
-            queue.queued
-                |> Dict.foldl foldFn
-                    ( { queue | queued = Dict.empty }
-                    , model
-                    , []
-                    )
-
-        foldFn key request ( queue1, m2, cmds ) =
-            let
-                ( state, ( m3, cmd ) ) =
-                    unwrapPromise (makeCmd request) m2
-            in
-            case state of
-                Done cmd2 ->
-                    ( { queue1 | pending = Dict.insert key request queue1.pending }
-                    , m3
-                    , cmd2 :: cmd :: cmds
-                    )
-
-                Error err ->
-                    ( { queue1
-                        | responses = Dict.insert key (Error err) queue1.responses
-                      }
-                    , m3
-                    , cmd :: cmds
-                    )
-
-                _ ->
-                    ( { queue1 | queued = Dict.insert key request queue1.queued }
-                    , m3
-                    , cmd :: cmds
-                    )
-    in
-    ( Queue nextQueue
-    , ( m4, Cmd.batch cmds1 )
-    )
-
-
-queue_runSequential :
-    (request -> Promise model msg err (Cmd msg))
-    -> Queue request err response
-    -> model
-    -> ( Queue request err response, ( model, Cmd msg ) )
-queue_runSequential makeCmd (Queue queue) model =
-    let
-        ( nextQueue, m4, cmds1 ) =
-            if Dict.isEmpty queue.pending then
-                case
-                    queue.queued
-                        |> Dict.toList
-                        |> List.head
-                of
-                    Just ( key, request ) ->
-                        foldFn
-                            key
-                            request
-                            ( { queue | queued = Dict.remove key queue.queued }
-                            , model
-                            , []
-                            )
-
-                    Nothing ->
-                        ( queue, model, [] )
-
-            else
-                ( queue, model, [] )
-
-        foldFn key request ( queue1, m2, cmds ) =
-            let
-                ( state, ( m3, cmd ) ) =
-                    unwrapPromise (makeCmd request) m2
-            in
-            case state of
-                Done cmd2 ->
-                    ( { queue1 | pending = Dict.insert key request queue1.pending }
-                    , m3
-                    , cmd2 :: cmd :: cmds
-                    )
-
-                Error err ->
-                    ( { queue1
-                        | responses = Dict.insert key (Error err) queue1.responses
-                      }
-                    , m3
-                    , cmd :: cmds
-                    )
-
-                _ ->
-                    ( { queue1 | queued = Dict.insert key request queue1.queued }
-                    , m3
-                    , cmd :: cmds
-                    )
-    in
-    ( Queue nextQueue
-    , ( m4, Cmd.batch cmds1 )
-    )
+unwrap : Promise model msg e a -> (model -> ( State e a, ( model, Cmd msg ) ))
+unwrap (Promise p) =
+    p
