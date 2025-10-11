@@ -3,7 +3,7 @@ module Promise exposing
     , cmdWhenEmpty, cmdWhenEmptyInDict
     , map, andThen, andMap, map2, map3, map4, combine
     , mapMsg, mapError
-    , nothingOnError, nothingOnErrorIf, toResult, toState
+    , nothingOnError, nothingOnErrorIf, toResult, withState
     , whenPending, whenError, recover
     , withModel, embedModel
     , whenResolved, update, runWith, run
@@ -34,7 +34,7 @@ module Promise exposing
 
 ## Extract
 
-@docs nothingOnError, nothingOnErrorIf, toResult, toState
+@docs nothingOnError, nothingOnErrorIf, toResult, withState
 
 
 ## Handle specific states
@@ -297,12 +297,11 @@ toResult =
 
 
 {-| -}
-toState : Promise model msg e a -> Promise model msg xx (State e a)
-toState (Promise promise) =
+withState : Promise model msg e a -> Promise model msg xx (State e a)
+withState (Promise promise) =
     Promise
         (\model1 ->
             let
-                -- ( State e a, ( model, Cmd msg ) ) =
                 ( state, ( model2, cmd ) ) =
                     promise model1
             in
@@ -428,6 +427,7 @@ andThen andThenFun (Promise promise) =
 
                 Pending (Just a) ->
                     next a
+                        |> Tuple.mapFirst State.setPending
 
                 Stale a ->
                     next a

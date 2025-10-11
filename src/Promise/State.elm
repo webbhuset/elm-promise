@@ -2,7 +2,7 @@ module Promise.State exposing
     ( State(..)
     , fromMaybe, fromResult
     , resolve, toMaybe, getError, toResult
-    , markStale, map
+    , markStale, setPending, map
     , isEmpty, isPending, isStale, isDone, isError
     , encode, decoder
     )
@@ -25,7 +25,7 @@ module Promise.State exposing
 
 ## Modify state
 
-@docs markStale, map
+@docs markStale, setPending, map
 
 
 ## Check states
@@ -237,6 +237,30 @@ markStale state =
 
         _ ->
             state
+
+
+{-| Set the state to `Pending`, keeping any existing value as a `Maybe`.
+
+    setPending (Done 5) == Pending (Just 5)
+
+-}
+setPending : State e a -> State e a
+setPending state =
+    case state of
+        Empty ->
+            Pending Nothing
+
+        Pending a ->
+            Pending a
+
+        Stale a ->
+            Pending (Just a)
+
+        Done a ->
+            Pending (Just a)
+
+        Error e ->
+            Error e
 
 
 {-| Check if a state is empty, meaning no value has been requested yet.

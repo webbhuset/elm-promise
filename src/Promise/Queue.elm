@@ -3,8 +3,12 @@ module Promise.Queue exposing (..)
 import Promise.State as State exposing (State)
 
 
+type RequestId
+    = RequestId Int
+
+
 type alias Queue req =
-    { requests : List ( Int, req )
+    { requests : List ( RequestId, req )
     , nextId : Int
     }
 
@@ -19,12 +23,12 @@ empty =
 add : req -> Queue req -> Queue req
 add request queue =
     { queue
-        | requests = queue.requests ++ [ ( queue.nextId, request ) ]
+        | requests = queue.requests ++ [ ( RequestId queue.nextId, request ) ]
         , nextId = queue.nextId + 1
     }
 
 
-remove : Int -> Queue req -> Queue req
+remove : RequestId -> Queue req -> Queue req
 remove id queue =
     { queue
         | requests =
@@ -36,8 +40,8 @@ remove id queue =
     }
 
 
-update : Int -> req -> Queue req -> Queue req
-update id newRequest queue =
+insert : RequestId -> req -> Queue req -> Queue req
+insert id newRequest queue =
     { queue
         | requests =
             List.map
@@ -58,16 +62,16 @@ type Action r eff
     | Wait
 
 
-sendNext : (Int -> r -> Action r eff) -> Queue r -> ( Queue r, List eff )
+sendNext : (RequestId -> r -> Action r eff) -> Queue r -> ( Queue r, List eff )
 sendNext toAction queue =
     walkRequests toAction queue.requests
         |> Tuple.mapFirst (\newRequests -> { queue | requests = newRequests })
 
 
 walkRequests :
-    (Int -> r -> Action r eff)
-    -> List ( Int, r )
-    -> ( List ( Int, r ), List eff )
+    (RequestId -> r -> Action r eff)
+    -> List ( RequestId, r )
+    -> ( List ( RequestId, r ), List eff )
 walkRequests toAction requests =
     case requests of
         [] ->
