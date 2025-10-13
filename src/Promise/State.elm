@@ -260,7 +260,7 @@ setPending state =
             Pending (Just a)
 
         Error e ->
-            Error e
+            Pending Nothing
 
 
 {-| Check if a state is empty, meaning no value has been requested yet.
