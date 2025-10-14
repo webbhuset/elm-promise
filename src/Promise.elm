@@ -1,12 +1,14 @@
 module Promise exposing
-    ( Promise, succeed, fail, fromState
+    ( Promise
+    , succeed, fail, fromState
+    , fromModel, fromUpdate
     , effectWhenEmpty, effectWhenEmptyInDict
     , map, andThen, andMap, map2, map3, map4, combine
-    , mapMsg, mapError
-    , nothingOnError, nothingOnErrorIf, toResult, withState
+    , mapEffect, mapError
+    , nothingOnError, nothingOnErrorIf, withResult, withState
     , whenPending, whenError, recover
-    , withModel, editModel, embedModel
-    , whenResolved, update, runWith, run
+    , embedModel
+    , update, runWith, run
     )
 
 {-|
@@ -14,10 +16,14 @@ module Promise exposing
 
 ## A Promise type for managing asynchronous effects in Elm
 
-@docs Promise, succeed, fail, fromState
+@docs Promise
 
 
-## Create effectful promises
+## Create promises
+
+@docs succeed, fail, fromState
+
+@docs fromModel, fromUpdate
 
 @docs effectWhenEmpty, effectWhenEmptyInDict
 
@@ -27,14 +33,14 @@ module Promise exposing
 @docs map, andThen, andMap, map2, map3, map4, combine
 
 
-## Transform messages, errors, and states
+## Transform effect, errors, and states
 
-@docs mapMsg, mapError
+@docs mapEffect, mapError
 
 
 ## Extract
 
-@docs nothingOnError, nothingOnErrorIf, toResult, withState
+@docs nothingOnError, nothingOnErrorIf, withResult, withState
 
 
 ## Handle specific states
@@ -44,12 +50,12 @@ module Promise exposing
 
 ## Working with the Model
 
-@docs withModel, embedModel
+@docs embedModel
 
 
 ## Run updates when a promise resolves
 
-@docs whenResolved, update, runWith, run
+@docs update, runWith, run
 
 -}
 
@@ -173,27 +179,27 @@ effectWhenEmptyInDict key get set getEffect =
 
 
 {-| -}
-withModel : (model -> Promise model effect e a) -> Promise model effect e a
-withModel f =
+fromModel : (model -> Promise model effect e a) -> Promise model effect e a
+fromModel f =
     Promise (\m -> unwrap (f m) m)
 
 
 {-| -}
-editModel : (model -> ( model, State e a )) -> Promise model effect e a
-editModel fn =
+fromUpdate : (model -> ( model, Promise model effect e a )) -> Promise model effect e a
+fromUpdate fn =
     Promise
         (\model1 ->
             let
-                ( model2, state ) =
+                ( model2, promise ) =
                     fn model1
             in
-            ( state, ( model2, [] ) )
+            unwrap promise model2
         )
 
 
 {-| -}
-mapMsg : (effect1 -> effect2) -> Promise model effect1 e a -> Promise model effect2 e a
-mapMsg mapFun (Promise promise) =
+mapEffect : (effect1 -> effect2) -> Promise model effect1 e a -> Promise model effect2 e a
+mapEffect mapFun (Promise promise) =
     Promise
         (\model1 ->
             let
@@ -303,8 +309,8 @@ nothingOnErrorIf isIgnorable =
 
 
 {-| -}
-toResult : Promise model effect e a -> Promise model effect xx (Result e a)
-toResult =
+withResult : Promise model effect e a -> Promise model effect xx (Result e a)
+withResult =
     map Ok >> whenError Err
 
 
@@ -570,55 +576,6 @@ map4 mapFun promise1 promise2 promise3 promise4 =
 combine : List (Promise model effect e a) -> Promise model effect e (List a)
 combine =
     List.foldr (map2 (::)) (succeed [])
-
-
-{-| -}
-whenResolved :
-    (Result e a -> model -> ( model, List effect ))
-    -> Promise model effect e a
-    -> Promise model effect Never ()
-whenResolved mapFun (Promise promise) =
-    Promise
-        (\model0 ->
-            let
-                ( state, ( model1, e1 ) ) =
-                    promise model0
-            in
-            case state of
-                Empty ->
-                    ( Empty, ( model1, e1 ) )
-
-                Pending Nothing ->
-                    ( Pending Nothing, ( model1, e1 ) )
-
-                Pending (Just a) ->
-                    let
-                        ( model2, e2 ) =
-                            mapFun (Ok a) model1
-                    in
-                    ( Done (), ( model2, e1 ++ e2 ) )
-
-                Stale a ->
-                    let
-                        ( model2, e2 ) =
-                            mapFun (Ok a) model1
-                    in
-                    ( Stale (), ( model2, e1 ++ e2 ) )
-
-                Done a ->
-                    let
-                        ( model2, e2 ) =
-                            mapFun (Ok a) model1
-                    in
-                    ( Done (), ( model2, e1 ++ e2 ) )
-
-                Error e ->
-                    let
-                        ( model2, e2 ) =
-                            mapFun (Err e) model1
-                    in
-                    ( Done (), ( model2, e1 ++ e2 ) )
-        )
 
 
 {-| -}

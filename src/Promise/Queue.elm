@@ -22,10 +22,12 @@ import Promise.State as State exposing (State)
 import Set exposing (Set)
 
 
+{-| -}
 type RequestId
     = RequestId String
 
 
+{-| -}
 type Queue reqest
     = Queue (I_Queue reqest)
 
@@ -37,11 +39,13 @@ type alias I_Queue r =
     }
 
 
+{-| -}
 requests : Queue request -> List ( RequestId, request )
 requests (Queue queue) =
     queue.requests
 
 
+{-| -}
 empty : String -> Queue req
 empty prefix =
     { requests = []
@@ -51,6 +55,7 @@ empty prefix =
         |> Queue
 
 
+{-| -}
 add : req -> Queue req -> Queue req
 add request (Queue queue) =
     let
@@ -66,6 +71,7 @@ add request (Queue queue) =
         }
 
 
+{-| -}
 remove : RequestId -> Queue req -> Queue req
 remove id (Queue queue) =
     Queue
@@ -79,6 +85,7 @@ remove id (Queue queue) =
         }
 
 
+{-| -}
 insert : RequestId -> req -> Queue req -> Queue req
 insert id newRequest (Queue queue) =
     Queue
@@ -96,11 +103,13 @@ insert id newRequest (Queue queue) =
         }
 
 
+{-| -}
 any : (request -> Bool) -> Queue request -> Bool
 any predicate (Queue queue) =
     List.any (predicate << Tuple.second) queue.requests
 
 
+{-| -}
 all : (request -> Bool) -> Queue request -> Bool
 all predicate (Queue queue) =
     List.all (predicate << Tuple.second) queue.requests
@@ -110,6 +119,7 @@ all predicate (Queue queue) =
 -- ATTEMPT QUEUE PROCESSING
 
 
+{-| -}
 run :
     (RequestId -> req -> Promise model eff err (Group req eff))
     -> Queue req
@@ -167,6 +177,7 @@ run handleReq (Queue queue) =
             )
 
 
+{-| -}
 type Group request effect
     = SendGroup String request effect
     | StopGroup String
@@ -174,11 +185,13 @@ type Group request effect
     | Skip
 
 
+{-| -}
 skip : Group request effect
 skip =
     Skip
 
 
+{-| -}
 send :
     State err response
     -> Promise model eff err ( request, effect )
@@ -207,6 +220,7 @@ send state promise =
                 |> Promise.map (\_ -> Skip)
 
 
+{-| -}
 withGroup :
     String
     -> State err response
