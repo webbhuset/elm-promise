@@ -2,7 +2,7 @@ module Promise.Queue exposing
     ( Queue, RequestId(..)
     , empty, add, remove, insert
     , requests, any, all
-    , run, Group, send, withGroup
+    , run, Group, send, withGroup, skip
     )
 
 {-|
@@ -13,7 +13,7 @@ module Promise.Queue exposing
 
 @docs requests, any, all
 
-@docs run, Group, send, withGroup
+@docs run, Group, send, withGroup, skip
 
 -}
 
@@ -172,6 +172,11 @@ type Group request effect
     | StopGroup String
     | Send request effect
     | Skip
+
+
+skip : Group request effect
+skip =
+    Skip
 
 
 send :
