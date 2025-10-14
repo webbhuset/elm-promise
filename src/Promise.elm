@@ -5,7 +5,7 @@ module Promise exposing
     , mapMsg, mapError
     , nothingOnError, nothingOnErrorIf, toResult, withState
     , whenPending, whenError, recover
-    , withModel, embedModel
+    , withModel, editModel, embedModel
     , whenResolved, update, runWith, run
     )
 
@@ -176,6 +176,19 @@ effectWhenEmptyInDict key get set getEffect =
 withModel : (model -> Promise model effect e a) -> Promise model effect e a
 withModel f =
     Promise (\m -> unwrap (f m) m)
+
+
+{-| -}
+editModel : (model -> ( model, State e a )) -> Promise model effect e a
+editModel fn =
+    Promise
+        (\model1 ->
+            let
+                ( model2, state ) =
+                    fn model1
+            in
+            ( state, ( model2, [] ) )
+        )
 
 
 {-| -}
