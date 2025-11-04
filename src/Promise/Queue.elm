@@ -162,7 +162,7 @@ run handleReq (Queue queue) =
                                 )
                     )
             )
-            (Promise.succeed ( [], Set.empty ))
+            (Promise.fromValue ( [], Set.empty ))
         |> Promise.map
             (Tuple.first
                 >> List.reverse

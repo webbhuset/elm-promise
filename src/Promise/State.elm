@@ -152,19 +152,31 @@ getError state =
             Nothing
 
 
-{-| Turn a state back into a `Result`, using the provided error when nothing has finished yet.
+{-| Turn a state into a `Result`.
 
-    toResult "still loading" (Done 8) == Ok 8
+Provide a default `Result` to use when there is no value available.
+
+    toResult (Ok 1) (Done 42) == Ok 42
+
+    toResult (Ok 1) Empty == Ok 1
+
+    toResult (Ok 1) (Error "Oh no!") == Err "Oh no!"
+
+    toResult (Err "No answer") (Done 42) == Ok 42
+
+    toResult (Err "No answer") Empty == Err "No answer"
+
+    toResult (Err "No answer") (Error "Oh no!") == Err "Oh no!"
 
 -}
-toResult : e -> State e a -> Result e a
-toResult errorWhenEmpty state =
+toResult : Result e a -> State e a -> Result e a
+toResult result state =
     case state of
         Empty ->
-            Err errorWhenEmpty
+            result
 
         Pending Nothing ->
-            Err errorWhenEmpty
+            result
 
         Pending (Just a) ->
             Ok a
@@ -282,6 +294,8 @@ isEmpty state =
 
     isPending (Pending Nothing) == True
 
+    isPending (Pending (Just 1)) == True
+
 -}
 isPending : State e a -> Bool
 isPending state =
@@ -340,7 +354,11 @@ isError state =
 
 {-| Encode a state to JSON, given encoders for the error and value types.
 
-    encode JE.string JE.int (Done 5) == "{" tag ":" Done "," value ":5}"
+    encode JE.string JE.int (Done 5)
+        |> JE.encode 2
+        == """{ "tag": "Done","value": 5}"""
+
+
 
 -}
 encode : (e -> Value) -> (a -> Value) -> State e a -> Value
@@ -378,7 +396,15 @@ encode encodeError encodeValue state =
 
 {-| Decode a state from JSON, given decoders for the error and value types.
 
-    decoder JD.string JD.int "{" tag ":" Done "," value ":5}" == Ok (Done 5)
+    JD.decodeString
+        (decoder JD.string JD.int)
+        """{ "tag": "Done","value": 5}"""
+        == Ok (Done 5)
+
+    JD.decodeString
+        (decoder JD.string JD.int)
+        """{ "tag": "Error","value": "oops"}"""
+        == Ok (Error "oops")
 
 -}
 decoder : Decoder e -> Decoder a -> Decoder (State e a)

@@ -1,11 +1,10 @@
 module Promise exposing
     ( Promise
-    , succeed, fail, fromState
-    , fromModel, fromUpdate
-    , effectWhenEmpty, effectWhenEmptyInDict
+    , fromValue, fromError, fromResult, fromState
+    , fromModel, fromUpdate, fromEffectWhenEmpty
     , map, andThen, andMap, map2, map3, map4, combine
     , mapEffect, mapError
-    , nothingOnError, nothingOnErrorIf, withResult, withState
+    , withMaybe, withMaybeWhenError, withResult, withState
     , whenPending, whenError, recover
     , embedModel
     , update, runWith, run
@@ -21,11 +20,9 @@ module Promise exposing
 
 ## Create promises
 
-@docs succeed, fail, fromState
+@docs fromValue, fromError, fromResult, fromState
 
-@docs fromModel, fromUpdate
-
-@docs effectWhenEmpty, effectWhenEmptyInDict
+@docs fromModel, fromUpdate, fromEffectWhenEmpty
 
 
 ## Map and chain promises
@@ -40,7 +37,7 @@ module Promise exposing
 
 ## Extract
 
-@docs nothingOnError, nothingOnErrorIf, withResult, withState
+@docs withMaybe, withMaybeWhenError, withResult, withState
 
 
 ## Handle specific states
@@ -73,8 +70,8 @@ type Promise model effect e a
 
 
 {-| -}
-succeed : a -> Promise model effect e a
-succeed a =
+fromValue : a -> Promise model effect e a
+fromValue a =
     Promise
         (\model ->
             ( Done a, ( model, [] ) )
@@ -82,12 +79,19 @@ succeed a =
 
 
 {-| -}
-fail : e -> Promise model effect e a
-fail error =
+fromError : e -> Promise model effect e a
+fromError error =
     Promise
         (\model ->
             ( Error error, ( model, [] ) )
         )
+
+
+{-| -}
+fromResult : Result e a -> Promise model effect e a
+fromResult result =
+    State.fromResult result
+        |> fromState
 
 
 {-| -}
@@ -99,92 +103,51 @@ fromState state =
         )
 
 
+{-| "Read" the `Model` to create a `Promise`.
 
--- PERFORM EFFECTS WHEN A STATE IS EMPTY
+For example when you need values from `Flags`.
 
-
-{-| -}
-effectWhenEmpty :
-    (model -> State e a)
-    -> (State e a -> model -> model)
-    -> Promise model effect e effect
-    -> Promise model effect e a
-effectWhenEmpty get set (Promise getEffect) =
-    Promise
-        (\model0 ->
-            case get model0 of
-                Empty ->
-                    effectWhenEmptyHelp set Nothing (getEffect model0)
-
-                Stale a ->
-                    effectWhenEmptyHelp set (Just a) (getEffect model0)
-
-                state ->
-                    ( state, ( model0, [] ) )
-        )
-
-
-effectWhenEmptyHelp :
-    (State e a -> model -> model)
-    -> Maybe a
-    -> ( State e effect, ( model, List effect ) )
-    -> ( State e a, ( model, List effect ) )
-effectWhenEmptyHelp set pending ( state, ( model1, effects ) ) =
-    case state of
-        Empty ->
-            ( Empty
-            , ( model1, effects )
-            )
-
-        Pending Nothing ->
-            ( Pending Nothing, ( model1, effects ) )
-
-        Pending (Just newEffect) ->
-            ( Pending Nothing
-            , ( model1
-              , newEffect :: effects
-              )
-            )
-
-        Stale newEffect ->
-            ( Pending pending
-            , ( set (Pending pending) model1
-              , newEffect :: effects
-              )
-            )
-
-        Done newEffect ->
-            ( Pending pending
-            , ( set (Pending pending) model1
-              , newEffect :: effects
-              )
-            )
-
-        Error e ->
-            ( Error e, ( model1, effects ) )
-
-
-{-| -}
-effectWhenEmptyInDict :
-    comparable
-    -> (model -> Dict comparable (State e a))
-    -> (Dict comparable (State e a) -> model -> model)
-    -> Promise model effect e effect
-    -> Promise model effect e a
-effectWhenEmptyInDict key get set getEffect =
-    effectWhenEmpty
-        (get >> Dict.get key >> Maybe.withDefault Empty)
-        (\v m -> set (Dict.insert key v (get m)) m)
-        getEffect
-
-
-{-| -}
+-}
 fromModel : (model -> Promise model effect e a) -> Promise model effect e a
 fromModel f =
     Promise (\m -> unwrap (f m) m)
 
 
-{-| -}
+{-| Create a `Promise` based on the `Model`. Also allows you to update the `Model`.
+
+Useful when you want to cache an expensive computation in the `Model`.
+
+    parseSource : String -> Result Parser.Error AST
+    parseSource source =
+        -- expensive parsing logic here
+        ...
+
+    cachedAst : String -> Promise Model effect Parser.Error AST
+    cachedAst source =
+        fromUpdate
+            (\model ->
+                case Dict.get source model.astCache of
+                    Just result ->
+                        ( model
+                        , Promise.fromResult result
+                        )
+
+                    Nothing ->
+                        let
+                            result =
+                                parseSource source
+                        in
+                        ( { model
+                            | astCache =
+                                Dict.insert source
+                                    result
+                                    model.astCache
+                          }
+                        , Promise.fromResult result
+                        )
+            )
+
+-}
 fromUpdate : (model -> ( model, Promise model effect e a )) -> Promise model effect e a
 fromUpdate fn =
     Promise
@@ -194,6 +157,65 @@ fromUpdate fn =
                     fn model1
             in
             unwrap promise model2
+        )
+
+
+{-| -}
+fromEffects : State err a -> List effect -> Promise model effect err a
+fromEffects state effects =
+    Promise (\m -> ( state, ( m, effects ) ))
+
+
+{-| Create a `Promise` based on values that are fetched via effects.
+
+The effect could be anything like HTTP requests, ports, etc.
+
+In this example, the effect is an HTTP request and it will only
+be performed if the current state is `Empty` or `Stale`.
+
+    type Msg
+        = GotUser (Result Http.Error User)
+        | OtherMessages
+
+    getUser : Promise User
+    getUser =
+        Http.get
+            { url = "/user"
+            , expect =
+                Http.expectJson
+                    GotUser
+                    userDecoder
+            }
+            |> Promise.fromValue
+            |> Promise.fromEffectWhenEmpty
+            |> Promise.embedModel
+                .user
+                (\state model ->
+                    { model | user = state }
+                )
+
+-}
+fromEffectWhenEmpty : Promise (State err a) effect err effect -> Promise (State err a) effect err a
+fromEffectWhenEmpty getEffect =
+    fromUpdate
+        (\state ->
+            case state of
+                Empty ->
+                    ( Pending Nothing
+                    , getEffect
+                        |> andThen (\effect -> fromEffects (State.Pending Nothing) [ effect ])
+                    )
+
+                Stale a ->
+                    ( Pending (Just a)
+                    , getEffect
+                        |> andThen (\effect -> fromEffects (State.Pending (Just a)) [ effect ])
+                    )
+
+                _ ->
+                    ( state
+                    , fromState state
+                    )
         )
 
 
@@ -289,22 +311,22 @@ whenError errorToA (Promise promise) =
 
 
 {-| -}
-nothingOnError : Promise model effect e a -> Promise model effect xx (Maybe a)
-nothingOnError =
+withMaybe : Promise model effect e a -> Promise model effect xx (Maybe a)
+withMaybe =
     map Just >> whenError (always Nothing)
 
 
 {-| -}
-nothingOnErrorIf : (e -> Bool) -> Promise model effect e a -> Promise model effect e (Maybe a)
-nothingOnErrorIf isIgnorable =
+withMaybeWhenError : (e -> Bool) -> Promise model effect e a -> Promise model effect e (Maybe a)
+withMaybeWhenError isIgnorable =
     map Just
         >> recover
             (\e ->
                 if isIgnorable e then
-                    succeed Nothing
+                    fromValue Nothing
 
                 else
-                    fail e
+                    fromError e
             )
 
 
@@ -537,7 +559,7 @@ map2 :
     -> Promise model effect e b
     -> Promise model effect e c
 map2 mapFun promise1 promise2 =
-    succeed mapFun
+    fromValue mapFun
         |> andMap promise1
         |> andMap promise2
 
@@ -550,7 +572,7 @@ map3 :
     -> Promise model effect e c
     -> Promise model effect e d
 map3 mapFun promise1 promise2 promise3 =
-    succeed mapFun
+    fromValue mapFun
         |> andMap promise1
         |> andMap promise2
         |> andMap promise3
@@ -565,7 +587,7 @@ map4 :
     -> Promise model effect err d
     -> Promise model effect err e
 map4 mapFun promise1 promise2 promise3 promise4 =
-    succeed mapFun
+    fromValue mapFun
         |> andMap promise1
         |> andMap promise2
         |> andMap promise3
@@ -575,7 +597,7 @@ map4 mapFun promise1 promise2 promise3 promise4 =
 {-| -}
 combine : List (Promise model effect e a) -> Promise model effect e (List a)
 combine =
-    List.foldr (map2 (::)) (succeed [])
+    List.foldr (map2 (::)) (fromValue [])
 
 
 {-| -}
