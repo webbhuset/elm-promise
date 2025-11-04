@@ -56,21 +56,13 @@ type alias User =
 
 
 {-| A mock remote call that converts a string to uppercase. If the string starts with "error", it simulates an error response.
+
+The State is stored in a Dict to cache results for each input string.
+
 -}
 fromRemote_ToUpper : String -> Promise String
 fromRemote_ToUpper str =
-    (if String.startsWith "error" str then
-        "(╯°□°）╯︵ ┻━┻"
-            |> Http.BadBody
-            |> Err
-
-     else
-        String.toUpper str
-            |> Ok
-    )
-        |> GotToUpper str
-        |> FromRemote
-        |> sendWithDelay 500
+    fetch_ToUpper str
         |> Promise.fromValue
         |> Promise.fromEffectWhenEmpty
         |> Promise.embedModel
@@ -89,15 +81,31 @@ fromRemote_ToUpper str =
             )
 
 
+{-| This would probably be a Http request in a real app.
+
+Here we just simulate success and error responses based on the input string with a delay.
+-}
+fetch_ToUpper : String -> Cmd Msg
+fetch_ToUpper str =
+    (if String.startsWith "error" str then
+        "(╯°□°）╯︵ ┻━┻"
+            |> Http.BadBody
+            |> Err
+
+     else
+        String.toUpper str
+            |> Ok
+    )
+        |> GotToUpper str
+        |> FromRemote
+        |> sendWithDelay 500
+
+
 {-| A mock remote call that provides autocomplete suggestions based on the input string.
 -}
 fromRemote_Suggestion : String -> Promise (List String)
 fromRemote_Suggestion str =
-    [ str ++ " 1", str ++ " 2", str ++ " 3" ]
-        |> Ok
-        |> GotSuggestion str
-        |> FromRemote
-        |> sendWithDelay 1000
+    fetch_Suggestions str
         |> Promise.fromValue
         |> Promise.fromEffectWhenEmpty
         |> Promise.embedModel
@@ -117,15 +125,23 @@ fromRemote_Suggestion str =
             )
 
 
+fetch_Suggestions : String -> Cmd Msg
+fetch_Suggestions term =
+    [ term ++ " One"
+    , term ++ " Two"
+    , term ++ " Three"
+    ]
+        |> Ok
+        |> GotSuggestion term
+        |> FromRemote
+        |> sendWithDelay 1000
+
+
 {-| A mock remote call that fetches user data based on the username.
 -}
 fromRemote_User : String -> Promise User
 fromRemote_User username =
-    { name = username }
-        |> Ok
-        |> GotUser
-        |> FromRemote
-        |> sendWithDelay 500
+    fetch_UserByUsername username
         |> Promise.fromValue
         |> Promise.fromEffectWhenEmpty
         |> Promise.embedModel
@@ -135,6 +151,15 @@ fromRemote_User username =
                     | fromRemote_User = state
                 }
             )
+
+
+fetch_UserByUsername : String -> Cmd Msg
+fetch_UserByUsername username =
+    { name = username }
+        |> Ok
+        |> GotUser
+        |> FromRemote
+        |> sendWithDelay 500
 
 
 
@@ -168,7 +193,7 @@ getPage : Promise Page
 getPage =
     Promise.fromModel
         (\model ->
-            case model.fromHtml_Username of
+            case model.fromHtml_SubmittedUsername of
                 Just username ->
                     Promise.map2
                         (\autocompleteResult user ->
@@ -177,11 +202,11 @@ getPage =
                             }
                                 |> Search
                         )
-                        (if String.isEmpty model.fromHtml_SearchTerm then
+                        (if String.isEmpty model.fromHtml_LastSearchTerm then
                             Promise.fromValue State.Empty
 
                          else
-                            fromRemote_ToUpper model.fromHtml_SearchTerm
+                            fromRemote_ToUpper model.fromHtml_LastSearchTerm
                                 |> Promise.andThen fromRemote_Suggestion
                                 |> Promise.withState
                         )
@@ -236,8 +261,8 @@ type
 -}
 type alias Model =
     RemoteModel
-        { fromHtml_Username : Maybe String
-        , fromHtml_SearchTerm : String
+        { fromHtml_SubmittedUsername : Maybe String
+        , fromHtml_LastSearchTerm : String
 
         -- The current page state. The page itself can also be in a pending/error state.
         , page : State Http.Error Page
@@ -249,8 +274,8 @@ initModel flags =
     { fromRemote_ToUpper = Dict.empty
     , fromRemote_Suggestion = Dict.empty
     , fromRemote_User = State.Empty
-    , fromHtml_Username = Nothing
-    , fromHtml_SearchTerm = ""
+    , fromHtml_SubmittedUsername = Nothing
+    , fromHtml_LastSearchTerm = ""
     , page = State.Empty
     }
 
@@ -323,11 +348,11 @@ update msg model =
                         |> resolvePage
 
         FromHtml_SearchTerm str ->
-            { model | fromHtml_SearchTerm = str }
+            { model | fromHtml_LastSearchTerm = str }
                 |> resolvePage
 
         FromHtml_LoginSubmit str ->
-            { model | fromHtml_Username = Just str }
+            { model | fromHtml_SubmittedUsername = Just str }
                 |> resolvePage
 
 
@@ -411,7 +436,7 @@ view_SearchPage model searchPage =
         , Html.input
             [ HA.type_ "search"
             , Events.onInput FromHtml_SearchTerm
-            , HA.value model.fromHtml_SearchTerm
+            , HA.value model.fromHtml_LastSearchTerm
             , HA.autofocus True
             ]
             []
@@ -481,6 +506,7 @@ view_State emptyNode htmlNode attr viewDone state =
                 (viewDone value)
 
 
+css : String
 css =
     """
 * {
