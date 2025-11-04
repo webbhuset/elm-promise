@@ -261,7 +261,26 @@ mapError f (Promise promise) =
         )
 
 
-{-| -}
+{-| Use a fixed value while state is `Pending Nothing`. Can be used to provide partial results when fetching in steps.
+
+    getFooAndBar : Promise { foo : Foo, bar : Maybe Bar }
+    getFooAndBar =
+        fetchFoo
+            |> Promise.andThen
+                (\foo ->
+                    fetchBar
+                        |> Promise.map
+                            (\bar ->
+                                { foo = foo
+                                , bar = Just bar
+                                }
+                            )
+                        |> Promise.whenPending
+                            { foo = foo
+                            , bar = Nothing
+                            }
+                )
+-}
 whenPending : a -> Promise model effect e a -> Promise model effect e a
 whenPending a (Promise promise) =
     Promise
@@ -279,7 +298,13 @@ whenPending a (Promise promise) =
         )
 
 
-{-| -}
+{-| Recover from an error with a fixed value.
+
+    getNumber : Promise Int
+    getNumber =
+        fetchNumber
+            |> Promise.whenError 0
+-}
 whenError : (e -> a) -> Promise model effect e a -> Promise model effect xx a
 whenError errorToA (Promise promise) =
     Promise
@@ -356,7 +381,13 @@ withState (Promise promise) =
         )
 
 
-{-| -}
+{-| Recover from an error with another promise.
+
+    getNumber : Promise Int
+    getNumber =
+        fetchNumber
+            |> Promise.recover (\_ -> fetchBackupNumber)
+-}
 recover : (e -> Promise model effect x a) -> Promise model effect e a -> Promise model effect x a
 recover recoverWith (Promise promise) =
     Promise
@@ -405,7 +436,13 @@ embedModel get set (Promise promise) =
         )
 
 
-{-| -}
+{-| Map a promise value.
+
+    getUppercaseString : Promise String
+    getUppercaseString =
+        fetchString
+            |> Promise.map String.toUpper
+-}
 map : (a -> b) -> Promise model effect e a -> Promise model effect e b
 map mapFun (Promise promise) =
     Promise
@@ -437,7 +474,16 @@ map mapFun (Promise promise) =
         )
 
 
-{-| -}
+{-| Chain a promise.
+
+    getUser : Promise User
+    getUser =
+        fetchAuthToken
+            |> Promise.andThen
+                (\token ->
+                    fetchUserWithToken token
+                )
+-}
 andThen :
     (a -> Promise model effect e b)
     -> Promise model effect e a
@@ -479,7 +525,21 @@ andThen andThenFun (Promise promise) =
         )
 
 
-{-| -}
+{-| Compose any number of promises.
+
+    type alias Checkout =
+        { product : Product
+        , category : Category
+        , cart : Cart
+        }
+
+    checkout : Promise Checkout
+    checkout =
+        Promise.fromValue Checkout
+            |> Promise.andMap (productById productId)
+            |> Promise.andMap (categoryById categoryId)
+            |> Promise.andMap currentCart
+-}
 andMap :
     Promise model effect e a
     -> Promise model effect e (a -> b)
@@ -552,7 +612,19 @@ andMap (Promise promise1) (Promise promise2) =
         )
 
 
-{-| -}
+{-| Compose two promises.
+
+    getFooAndBar : Promise { foo : Foo, bar : Bar }
+    getFooAndBar =
+        Promise.map2
+            (\foo bar ->
+                { foo = foo
+                , bar = bar
+                }
+            )
+            fetchFoo
+            fetchBar
+-}
 map2 :
     (a -> b -> c)
     -> Promise model effect e a
@@ -594,7 +666,14 @@ map4 mapFun promise1 promise2 promise3 promise4 =
         |> andMap promise4
 
 
-{-| -}
+{-| Combine a list of promises.
+
+    getItems : List String -> Promise (List Item)
+    getItems ids =
+        ids
+            |> List.map fetchItem
+            |> Promise.combine
+-}
 combine : List (Promise model effect e a) -> Promise model effect e (List a)
 combine =
     List.foldr (map2 (::)) (fromValue [])
