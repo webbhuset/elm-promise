@@ -4,6 +4,7 @@ module Promise.State exposing
     , resolve, toMaybe, getError, toResult
     , markStale, setPending, map
     , isEmpty, isPending, isStale, isDone, isError
+    , code
     , encode, decoder
     )
 
@@ -31,6 +32,11 @@ module Promise.State exposing
 ## Check states
 
 @docs isEmpty, isPending, isStale, isDone, isError
+
+
+## Helpers
+
+@docs code
 
 
 ## JSON Encoding/Decoding
@@ -352,13 +358,45 @@ isError state =
             False
 
 
+{-| Return a code representing the state constructor.
+
+Useful for CSS class names.
+
+    code Empty == "state-empty"
+
+    code (Pending Nothing) == "state-pending"
+
+    code (Error "oops") == "state-error"
+
+    code (Stale 3) == "state-stale"
+
+    code (Done 5) == "state-done"
+
+-}
+code : State e a -> String
+code state =
+    case state of
+        Empty ->
+            "state-empty"
+
+        Error _ ->
+            "state-error"
+
+        Pending _ ->
+            "state-pending"
+
+        Stale _ ->
+            "state-stale"
+
+        Done _ ->
+            "state-done"
+
+
 {-| Encode a state to JSON, given encoders for the error and value types.
 
     encode JE.string JE.int (Done 5)
         |> JE.encode 2
         == """{ "tag": "Done","value": 5}"""
-
-
 
 -}
 encode : (e -> Value) -> (a -> Value) -> State e a -> Value
