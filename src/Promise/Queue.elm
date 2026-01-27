@@ -18,7 +18,7 @@ module Promise.Queue exposing
 -}
 
 import Promise exposing (Promise)
-import Promise.State as State exposing (State)
+import Promise.ModelState as State exposing (State)
 import Set exposing (Set)
 
 
