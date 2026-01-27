@@ -185,7 +185,7 @@ being in a loading state.
 
 -}
 type alias SearchPage =
-    { suggestions : State Http.Error (List String)
+    { suggestions : State Http.Error (Maybe (List String))
     , user : User
     }
 
@@ -209,11 +209,12 @@ getPage =
                                 |> Search
                         )
                         (if String.isEmpty model.fromHtml_LastSearchTerm then
-                            Promise.fromValue (State.Done [])
+                            Promise.fromValue (State.Done Nothing)
 
                          else
                             fromRemote_ToUpper model.fromHtml_LastSearchTerm
                                 |> Promise.andThen fromRemote_Suggestion
+                                |> Promise.map Just
                                 |> Promise.withState
                         )
                         (fromRemote_User username)
@@ -453,16 +454,24 @@ view_SearchPage model searchPage =
         Html.div
         [ HA.class "suggestions-result"
         ]
-        (\suggestions ->
-            List.map
-                (\suggestion ->
-                    Html.li
-                        []
-                        [ Html.text suggestion ]
-                )
-                suggestions
-                |> Html.ul []
-                |> List.singleton
+        (\mbsuggestions ->
+            case mbsuggestions of
+                Nothing ->
+                    [ Html.div
+                        [ HA.class "state-empty" ]
+                        [ Html.text "Type to see suggestions..." ]
+                    ]
+
+                Just suggestions ->
+                    List.map
+                        (\suggestion ->
+                            Html.li
+                                []
+                                [ Html.text suggestion ]
+                        )
+                        suggestions
+                        |> Html.ul []
+                        |> List.singleton
         )
         searchPage.suggestions
     ]
