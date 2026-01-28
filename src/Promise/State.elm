@@ -1,7 +1,7 @@
 module Promise.State exposing
     ( fromResult
     , resolve, toMaybe, getError, toResult
-    , setPending, map
+    , setPending, map, andMap
     , isPending, isDone, isError
     , code
     , encode, decoder
@@ -186,6 +186,34 @@ map fn state =
 
         Done a ->
             Done (fn a)
+
+        Error e ->
+            Error e
+
+
+{-| Combine any number of states
+
+    map2 f stateA stateB =
+        Done f
+            |> andMap stateA
+            |> andMap stateB
+-}
+andMap : State e (a -> b) -> State e a -> State e b
+andMap stateFn stateA =
+    case stateFn of
+        Pending mf ->
+            case stateA of
+                Pending ma ->
+                    Pending (Maybe.map2 (\f a -> f a) mf ma)
+
+                Done a ->
+                    Pending (Maybe.map (\f -> f a) mf)
+
+                Error e ->
+                    Error e
+
+        Done f ->
+            map f stateA
 
         Error e ->
             Error e

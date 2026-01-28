@@ -544,42 +544,8 @@ andMap (Promise promise1) (Promise promise2) =
                 effects : List effect
                 effects =
                     e1 ++ e2
-
-                applyFn : a -> ( State e b, ( model, List effect ) )
-                applyFn a =
-                    case state2 of
-                        Pending Nothing ->
-                            ( Pending Nothing
-                            , ( model2, effects )
-                            )
-
-                        Pending (Just fn) ->
-                            ( Pending <| Just <| fn a
-                            , ( model2, effects )
-                            )
-
-                        Done fn ->
-                            ( Done (fn a)
-                            , ( model2, effects )
-                            )
-
-                        Error e ->
-                            ( Error e
-                            , ( model2, effects )
-                            )
             in
-            case state1 of
-                Pending Nothing ->
-                    ( Pending Nothing, ( model2, effects ) )
-
-                Pending (Just a) ->
-                    applyFn a
-
-                Done a ->
-                    applyFn a
-
-                Error e ->
-                    ( Error e, ( model2, effects ) )
+                ( State.andMap state2 state1, ( model2, effects ) )
         )
 
 
