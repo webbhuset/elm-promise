@@ -173,8 +173,13 @@ fetch_UserByUsername username =
 
 
 type Page
-    = Login
+    = Login LoginPage
     | Search SearchPage
+
+
+type alias LoginPage =
+    { pendingDemos : List (State Http.Error String)
+    }
 
 
 {-| The data needed for the Search page.
@@ -220,7 +225,28 @@ getPage =
                         (fromRemote_User username)
 
                 Nothing ->
-                    Promise.fromValue Login
+                    Promise.map3
+                        (\firstPending secondPending bothPending ->
+                            Login
+                                { pendingDemos = [ firstPending, secondPending, bothPending ]
+                                }
+                        )
+                        (Promise.andMap
+                            (Promise.fromState (State.Pending (Just "andMap: Value pending")))
+                            (Promise.fromState (State.Done identity))
+                            |> Promise.withState
+                        )
+                        (Promise.andMap
+                            (Promise.fromState (State.Done "andMap: function pending"))
+                            (Promise.fromState (State.Pending (Just identity)))
+                            |> Promise.withState
+                        )
+                        (Promise.map2
+                            (\x f -> f x)
+                            (Promise.fromState (State.Pending (Just "map2: Both pending")))
+                            (Promise.fromState (State.Pending (Just identity)))
+                            |> Promise.withState
+                        )
         )
 
 
@@ -387,11 +413,11 @@ view model =
             ]
             (\page ->
                 case page of
-                    Login ->
+                    Login loginPage ->
                         [ Html.section
                             [ HA.class "page-login"
                             ]
-                            view_LoginForm
+                            (view_LoginForm loginPage)
                         ]
 
                     Search searchPage ->
@@ -403,8 +429,8 @@ view model =
             )
 
 
-view_LoginForm : List (Html Msg)
-view_LoginForm =
+view_LoginForm : LoginPage -> List (Html Msg)
+view_LoginForm loginPage =
     [ Html.form
         [ Events.preventDefaultOn "submit"
             (Decode.at [ "target", "elements", "username", "value" ] Decode.string
@@ -430,6 +456,17 @@ view_LoginForm =
                 []
             ]
         , Html.button [ HA.type_ "submit" ] [ Html.text "Login" ]
+        , Html.div [ HA.class "demo-pending-bug" ]
+            (loginPage.pendingDemos
+                |> List.map
+                    (view_State
+                        (Html.text "Type to see suggestions...")
+                        Html.div
+                        [ HA.class "suggestions-result"
+                        ]
+                        (\myText -> [ Html.text myText ])
+                    )
+            )
         ]
     ]
 
