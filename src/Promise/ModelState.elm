@@ -1,22 +1,22 @@
-module Promise.State exposing
-    ( fromResult
+module Promise.ModelState exposing
+    ( State(..)
+    , fromMaybe, fromResult
     , resolve, toMaybe, getError, toResult
-    , setPending, map, andMap
-    , isPending, isDone, isError
+    , markStale, setPending, map
+    , isEmpty, isPending, isStale, isDone, isError
     , code
     , encode, decoder
-    , State(..)
     )
 
 {-| States represent the lifecycle of an asynchronous value that is loaded through
 `Promise` helpers.
 
-@docs FinalState
+@docs State
 
 
 ## Creating states
 
-@docs fromResult
+@docs fromMaybe, fromResult
 
 
 ## Conversions
@@ -26,12 +26,12 @@ module Promise.State exposing
 
 ## Modify state
 
-@docs setPending, map
+@docs markStale, setPending, map
 
 
 ## Check states
 
-@docs isPending, isDone, isError
+@docs isEmpty, isPending, isStale, isDone, isError
 
 
 ## Helpers
@@ -49,18 +49,26 @@ import Json.Decode as JD exposing (Decoder)
 import Json.Encode as JE exposing (Value)
 
 
-{-| Track whether a value is loading, finished, or has failed.
+{-| Track whether a value is loading, stale, finished, or has failed.
 
 
 ## Explanation of states
+
+    Empty
+
+No value has been requested yet
 
     Pending Nothing
 
 State is loading, no value yet
 
-    Pending (Just "value")
+    Pending (Just "old value")
 
-State is loading and we have a value
+State is reloading and we have an old value
+
+    Stale "old value"
+
+We have a value, but it should be refreshed
 
     Done "fresh value"
 
@@ -72,9 +80,28 @@ There was a problem loading the value
 
 -}
 type State e a
-    = Pending (Maybe a)
+    = Empty
+    | Pending (Maybe a)
+    | Stale a
     | Done a
     | Error e
+
+
+{-| Convert a `Maybe` into a state, keeping any existing payload.
+
+    fromMaybe (Just 10) == Done 10
+
+    fromMaybe Nothing == Empty
+
+-}
+fromMaybe : Maybe a -> State e a
+fromMaybe maybeValue =
+    case maybeValue of
+        Just a ->
+            Done a
+
+        Nothing ->
+            Empty
 
 
 {-| Convert a `Result` into a state, keeping successful payloads and failures.
@@ -100,8 +127,14 @@ fromResult result =
 toMaybe : State e a -> Maybe a
 toMaybe state =
     case state of
+        Empty ->
+            Nothing
+
         Pending a ->
             a
+
+        Stale a ->
+            Just a
 
         Done a ->
             Just a
@@ -131,13 +164,13 @@ Provide a default `Result` to use when there is no value available.
 
     toResult (Ok 1) (Done 42) == Ok 42
 
-    toResult (Ok 1) (Pending Nothing) == Ok 1
+    toResult (Ok 1) Empty == Ok 1
 
     toResult (Ok 1) (Error "Oh no!") == Err "Oh no!"
 
     toResult (Err "No answer") (Done 42) == Ok 42
 
-    toResult (Err "No answer") (Pending Nothing) == Err "No answer"
+    toResult (Err "No answer") Empty == Err "No answer"
 
     toResult (Err "No answer") (Error "Oh no!") == Err "Oh no!"
 
@@ -145,10 +178,16 @@ Provide a default `Result` to use when there is no value available.
 toResult : Result e a -> State e a -> Result e a
 toResult result state =
     case state of
+        Empty ->
+            result
+
         Pending Nothing ->
             result
 
         Pending (Just a) ->
+            Ok a
+
+        Stale a ->
             Ok a
 
         Done a ->
@@ -163,10 +202,16 @@ toResult result state =
 resolve : b -> (e -> b) -> (a -> b) -> State e a -> b
 resolve whenPending whenError whenValue state =
     case state of
+        Empty ->
+            whenPending
+
         Pending Nothing ->
             whenPending
 
         Pending (Just a) ->
+            whenValue a
+
+        Stale a ->
             whenValue a
 
         Done a ->
@@ -181,8 +226,14 @@ resolve whenPending whenError whenValue state =
 map : (a -> b) -> State e a -> State e b
 map fn state =
     case state of
+        Empty ->
+            Empty
+
         Pending ma ->
             Pending (Maybe.map fn ma)
+
+        Stale a ->
+            Stale (fn a)
 
         Done a ->
             Done (fn a)
@@ -191,32 +242,19 @@ map fn state =
             Error e
 
 
-{-| Combine any number of states
+{-| Mark completed values as `Stale` to indicate they should be refreshed.
 
-    map2 f stateA stateB =
-        Done f
-            |> andMap stateA
-            |> andMap stateB
+    markStale (Done "user") == Stale "user"
+
 -}
-andMap : State e (a -> b) -> State e a -> State e b
-andMap stateFn stateA =
-    case stateFn of
-        Pending mf ->
-            case stateA of
-                Pending ma ->
-                    Pending (Maybe.map2 (\f a -> f a) mf ma)
+markStale : State e a -> State e a
+markStale state =
+    case state of
+        Done a ->
+            Stale a
 
-                Done a ->
-                    Pending (Maybe.map (\f -> f a) mf)
-
-                Error e ->
-                    Error e
-
-        Done f ->
-            map f stateA
-
-        Error e ->
-            Error e
+        _ ->
+            state
 
 
 {-| Set the state to `Pending`, keeping any existing value as a `Maybe`.
@@ -227,14 +265,35 @@ andMap stateFn stateA =
 setPending : State e a -> State e a
 setPending state =
     case state of
+        Empty ->
+            Pending Nothing
+
         Pending a ->
             Pending a
+
+        Stale a ->
+            Pending (Just a)
 
         Done a ->
             Pending (Just a)
 
         Error e ->
             Pending Nothing
+
+
+{-| Check if a state is empty, meaning no value has been requested yet.
+
+    isEmpty Empty == True
+
+-}
+isEmpty : State e a -> Bool
+isEmpty state =
+    case state of
+        Empty ->
+            True
+
+        _ ->
+            False
 
 
 {-| Check if a state is currently pending.
@@ -248,6 +307,21 @@ isPending : State e a -> Bool
 isPending state =
     case state of
         Pending a ->
+            True
+
+        _ ->
+            False
+
+
+{-| Detect if the data is still usable but due for a refresh.
+
+    isStale (Stale 1) == True
+
+-}
+isStale : State e a -> Bool
+isStale state =
+    case state of
+        Stale a ->
             True
 
         _ ->
@@ -288,9 +362,13 @@ isError state =
 
 Useful for CSS class names.
 
+    code Empty == "state-empty"
+
     code (Pending Nothing) == "state-pending"
 
     code (Error "oops") == "state-error"
+
+    code (Stale 3) == "state-stale"
 
     code (Done 5) == "state-done"
 
@@ -298,11 +376,17 @@ Useful for CSS class names.
 code : State e a -> String
 code state =
     case state of
+        Empty ->
+            "state-empty"
+
         Error _ ->
             "state-error"
 
         Pending _ ->
             "state-pending"
+
+        Stale _ ->
+            "state-stale"
 
         Done _ ->
             "state-done"
@@ -318,10 +402,21 @@ code state =
 encode : (e -> Value) -> (a -> Value) -> State e a -> Value
 encode encodeError encodeValue state =
     case state of
+        Empty ->
+            JE.object
+                [ ( "tag", JE.string "Empty" )
+                ]
+
         Pending ma ->
             JE.object
                 [ ( "tag", JE.string "Pending" )
                 , ( "value", Maybe.map encodeValue ma |> Maybe.withDefault JE.null )
+                ]
+
+        Stale a ->
+            JE.object
+                [ ( "tag", JE.string "Stale" )
+                , ( "value", encodeValue a )
                 ]
 
         Done a ->
@@ -356,10 +451,17 @@ decoder decodeError decodeValue =
         |> JD.andThen
             (\tag ->
                 case tag of
+                    "Empty" ->
+                        JD.succeed Empty
+
                     "Pending" ->
                         JD.nullable decodeValue
                             |> JD.field "value"
                             |> JD.map Pending
+
+                    "Stale" ->
+                        JD.field "value" decodeValue
+                            |> JD.map Stale
 
                     "Done" ->
                         JD.field "value" decodeValue

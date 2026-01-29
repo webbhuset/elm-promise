@@ -57,6 +57,7 @@ module Promise exposing
 -}
 
 import Dict exposing (Dict)
+import Promise.ModelState as ModelState
 import Promise.State as State exposing (State(..))
 
 
@@ -195,26 +196,36 @@ be performed if the current state is `Empty` or `Stale`.
                 )
 
 -}
-fromEffectWhenEmpty : Promise (State err a) effect err effect -> Promise (State err a) effect err a
+fromEffectWhenEmpty : Promise (ModelState.State err a) effect err effect -> Promise (ModelState.State err a) effect err a
 fromEffectWhenEmpty getEffect =
     fromUpdate
         (\state ->
             case state of
-                Empty ->
-                    ( Pending Nothing
+                ModelState.Empty ->
+                    ( ModelState.Pending Nothing
                     , getEffect
                         |> andThen (\effect -> fromEffects (State.Pending Nothing) [ effect ])
                     )
 
-                Stale a ->
-                    ( Pending (Just a)
+                ModelState.Stale a ->
+                    ( ModelState.Pending (Just a)
                     , getEffect
                         |> andThen (\effect -> fromEffects (State.Pending (Just a)) [ effect ])
                     )
 
-                _ ->
-                    ( state
-                    , fromState state
+                ModelState.Done a ->
+                    ( ModelState.Done a
+                    , fromState (State.Done a)
+                    )
+
+                ModelState.Pending a ->
+                    ( ModelState.Pending a
+                    , fromState (State.Pending a)
+                    )
+
+                ModelState.Error e ->
+                    ( ModelState.Error e
+                    , fromState (State.Error e)
                     )
         )
 
@@ -242,14 +253,8 @@ mapError f (Promise promise) =
                     promise model1
             in
             ( case state of
-                Empty ->
-                    Empty
-
                 Pending a ->
                     Pending a
-
-                Stale a ->
-                    Stale a
 
                 Done a ->
                     Done a
@@ -280,6 +285,7 @@ mapError f (Promise promise) =
                             , bar = Nothing
                             }
                 )
+
 -}
 whenPending : a -> Promise model effect e a -> Promise model effect e a
 whenPending a (Promise promise) =
@@ -304,6 +310,7 @@ whenPending a (Promise promise) =
     getNumber =
         fetchNumber
             |> Promise.whenError 0
+
 -}
 whenError : (e -> a) -> Promise model effect e a -> Promise model effect xx a
 whenError errorToA (Promise promise) =
@@ -317,14 +324,8 @@ whenError errorToA (Promise promise) =
                 Error e ->
                     ( Done (errorToA e), ( model2, effects ) )
 
-                Empty ->
-                    ( Empty, ( model2, effects ) )
-
                 Pending a ->
                     ( Pending a, ( model2, effects ) )
-
-                Stale a ->
-                    ( Stale a, ( model2, effects ) )
 
                 Done a ->
                     ( Done a, ( model2, effects ) )
@@ -387,6 +388,7 @@ withState (Promise promise) =
     getNumber =
         fetchNumber
             |> Promise.recover (\_ -> fetchBackupNumber)
+
 -}
 recover : (e -> Promise model effect x a) -> Promise model effect e a -> Promise model effect x a
 recover recoverWith (Promise promise) =
@@ -397,14 +399,8 @@ recover recoverWith (Promise promise) =
                     promise model1
             in
             case state of
-                Empty ->
-                    ( Empty, ( model2, effects ) )
-
                 Pending a ->
                     ( Pending a, ( model2, effects ) )
-
-                Stale a ->
-                    ( Stale a, ( model2, effects ) )
 
                 Done a ->
                     ( Done a, ( model2, effects ) )
@@ -442,6 +438,7 @@ embedModel get set (Promise promise) =
     getUppercaseString =
         fetchString
             |> Promise.map String.toUpper
+
 -}
 map : (a -> b) -> Promise model effect e a -> Promise model effect e b
 map mapFun (Promise promise) =
@@ -452,17 +449,11 @@ map mapFun (Promise promise) =
                     promise model1
             in
             ( case state of
-                Empty ->
-                    Empty
-
                 Pending Nothing ->
                     Pending Nothing
 
                 Pending (Just a) ->
                     Pending (Just (mapFun a))
-
-                Stale a ->
-                    Stale (mapFun a)
 
                 Done a ->
                     Done (mapFun a)
@@ -483,6 +474,7 @@ map mapFun (Promise promise) =
                 (\token ->
                     fetchUserWithToken token
                 )
+
 -}
 andThen :
     (a -> Promise model effect e b)
@@ -504,18 +496,12 @@ andThen andThenFun (Promise promise) =
                     ( state2, ( model2, e1 ++ e2 ) )
             in
             case state1 of
-                Empty ->
-                    ( Empty, ( model1, e1 ) )
-
                 Pending Nothing ->
                     ( Pending Nothing, ( model1, e1 ) )
 
                 Pending (Just a) ->
                     next a
                         |> Tuple.mapFirst State.setPending
-
-                Stale a ->
-                    next a
 
                 Done a ->
                     next a
@@ -539,6 +525,7 @@ andThen andThenFun (Promise promise) =
             |> Promise.andMap (productById productId)
             |> Promise.andMap (categoryById categoryId)
             |> Promise.andMap currentCart
+
 -}
 andMap :
     Promise model effect e a
@@ -557,58 +544,8 @@ andMap (Promise promise1) (Promise promise2) =
                 effects : List effect
                 effects =
                     e1 ++ e2
-
-                applyFn : a -> ( State e b, ( model, List effect ) )
-                applyFn a =
-                    case state2 of
-                        Empty ->
-                            ( Empty
-                            , ( model2, effects )
-                            )
-
-                        Pending Nothing ->
-                            ( Pending Nothing
-                            , ( model2, effects )
-                            )
-
-                        Pending (Just fn) ->
-                            ( Pending <| Just <| fn a
-                            , ( model2, effects )
-                            )
-
-                        Stale fn ->
-                            ( Stale (fn a)
-                            , ( model2, effects )
-                            )
-
-                        Done fn ->
-                            ( Done (fn a)
-                            , ( model2, effects )
-                            )
-
-                        Error e ->
-                            ( Error e
-                            , ( model2, effects )
-                            )
             in
-            case state1 of
-                Empty ->
-                    ( Empty, ( model2, effects ) )
-
-                Pending Nothing ->
-                    ( Pending Nothing, ( model2, effects ) )
-
-                Pending (Just a) ->
-                    applyFn a
-
-                Stale a ->
-                    applyFn a
-
-                Done a ->
-                    applyFn a
-
-                Error e ->
-                    ( Error e, ( model2, effects ) )
+                ( State.andMap state2 state1, ( model2, effects ) )
         )
 
 
@@ -624,6 +561,7 @@ andMap (Promise promise1) (Promise promise2) =
             )
             fetchFoo
             fetchBar
+
 -}
 map2 :
     (a -> b -> c)
@@ -673,6 +611,7 @@ map4 mapFun promise1 promise2 promise3 promise4 =
         ids
             |> List.map fetchItem
             |> Promise.combine
+
 -}
 combine : List (Promise model effect e a) -> Promise model effect e (List a)
 combine =

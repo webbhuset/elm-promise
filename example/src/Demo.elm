@@ -13,6 +13,7 @@ import Http
 import Json.Decode as Decode
 import Process
 import Promise
+import Promise.ModelState as ModelState
 import Promise.State as State exposing (State)
 import Task exposing (Task)
 
@@ -22,6 +23,10 @@ repeat the full type signature everywhere.
 -}
 type alias Promise a =
     Promise.Promise Model (Cmd Msg) Http.Error a
+
+
+type alias ModelState e a =
+    ModelState.State e a
 
 
 
@@ -44,9 +49,9 @@ Note that we use Dicts to cache results for different input values.
 -}
 type alias RemoteModel a =
     { a
-        | fromRemote_ToUpper : Dict String (State Http.Error String)
-        , fromRemote_Suggestion : Dict String (State Http.Error (List String))
-        , fromRemote_User : State Http.Error User
+        | fromRemote_ToUpper : Dict String (ModelState Http.Error String)
+        , fromRemote_Suggestion : Dict String (ModelState Http.Error (List String))
+        , fromRemote_User : ModelState Http.Error User
     }
 
 
@@ -68,7 +73,7 @@ fromRemote_ToUpper str =
         |> Promise.embedModel
             (.fromRemote_ToUpper
                 >> Dict.get str
-                >> Maybe.withDefault State.Empty
+                >> Maybe.withDefault ModelState.Empty
             )
             (\state model ->
                 { model
@@ -84,6 +89,7 @@ fromRemote_ToUpper str =
 {-| This would probably be a Http request in a real app.
 
 Here we just simulate success and error responses based on the input string with a delay.
+
 -}
 fetch_ToUpper : String -> Cmd Msg
 fetch_ToUpper str =
@@ -112,7 +118,7 @@ fromRemote_Suggestion str =
             (.fromRemote_Suggestion
                 >> Dict.get str
                 >> Maybe.withDefault
-                    State.Empty
+                    ModelState.Empty
             )
             (\state model ->
                 { model
@@ -167,8 +173,13 @@ fetch_UserByUsername username =
 
 
 type Page
-    = Login
+    = Login LoginPage
     | Search SearchPage
+
+
+type alias LoginPage =
+    { pendingDemos : List (State Http.Error String)
+    }
 
 
 {-| The data needed for the Search page.
@@ -179,7 +190,7 @@ being in a loading state.
 
 -}
 type alias SearchPage =
-    { suggestions : State Http.Error (List String)
+    { suggestions : State Http.Error (Maybe (List String))
     , user : User
     }
 
@@ -203,17 +214,39 @@ getPage =
                                 |> Search
                         )
                         (if String.isEmpty model.fromHtml_LastSearchTerm then
-                            Promise.fromValue State.Empty
+                            Promise.fromValue (State.Done Nothing)
 
                          else
                             fromRemote_ToUpper model.fromHtml_LastSearchTerm
                                 |> Promise.andThen fromRemote_Suggestion
+                                |> Promise.map Just
                                 |> Promise.withState
                         )
                         (fromRemote_User username)
 
                 Nothing ->
-                    Promise.fromValue Login
+                    Promise.map3
+                        (\firstPending secondPending bothPending ->
+                            Login
+                                { pendingDemos = [ firstPending, secondPending, bothPending ]
+                                }
+                        )
+                        (Promise.andMap
+                            (Promise.fromState (State.Pending (Just "andMap: Value pending")))
+                            (Promise.fromState (State.Done identity))
+                            |> Promise.withState
+                        )
+                        (Promise.andMap
+                            (Promise.fromState (State.Done "andMap: function pending"))
+                            (Promise.fromState (State.Pending (Just identity)))
+                            |> Promise.withState
+                        )
+                        (Promise.map2
+                            (\x f -> f x)
+                            (Promise.fromState (State.Pending (Just "map2: Both pending")))
+                            (Promise.fromState (State.Pending (Just identity)))
+                            |> Promise.withState
+                        )
         )
 
 
@@ -273,10 +306,10 @@ initModel : Flags -> Model
 initModel flags =
     { fromRemote_ToUpper = Dict.empty
     , fromRemote_Suggestion = Dict.empty
-    , fromRemote_User = State.Empty
+    , fromRemote_User = ModelState.Empty
     , fromHtml_SubmittedUsername = Nothing
     , fromHtml_LastSearchTerm = ""
-    , page = State.Empty
+    , page = State.Pending Nothing
     }
 
 
@@ -327,7 +360,7 @@ update msg model =
                     { model
                         | fromRemote_ToUpper =
                             Dict.insert str
-                                (State.fromResult result)
+                                (ModelState.fromResult result)
                                 model.fromRemote_ToUpper
                     }
                         |> resolvePage
@@ -336,14 +369,14 @@ update msg model =
                     { model
                         | fromRemote_Suggestion =
                             Dict.insert str
-                                (State.fromResult result)
+                                (ModelState.fromResult result)
                                 model.fromRemote_Suggestion
                     }
                         |> resolvePage
 
                 GotUser result ->
                     { model
-                        | fromRemote_User = State.fromResult result
+                        | fromRemote_User = ModelState.fromResult result
                     }
                         |> resolvePage
 
@@ -380,11 +413,11 @@ view model =
             ]
             (\page ->
                 case page of
-                    Login ->
+                    Login loginPage ->
                         [ Html.section
                             [ HA.class "page-login"
                             ]
-                            view_LoginForm
+                            (view_LoginForm loginPage)
                         ]
 
                     Search searchPage ->
@@ -396,8 +429,8 @@ view model =
             )
 
 
-view_LoginForm : List (Html Msg)
-view_LoginForm =
+view_LoginForm : LoginPage -> List (Html Msg)
+view_LoginForm loginPage =
     [ Html.form
         [ Events.preventDefaultOn "submit"
             (Decode.at [ "target", "elements", "username", "value" ] Decode.string
@@ -423,6 +456,17 @@ view_LoginForm =
                 []
             ]
         , Html.button [ HA.type_ "submit" ] [ Html.text "Login" ]
+        , Html.div [ HA.class "demo-pending-bug" ]
+            (loginPage.pendingDemos
+                |> List.map
+                    (view_State
+                        (Html.text "Type to see suggestions...")
+                        Html.div
+                        [ HA.class "suggestions-result"
+                        ]
+                        (\myText -> [ Html.text myText ])
+                    )
+            )
         ]
     ]
 
@@ -447,16 +491,24 @@ view_SearchPage model searchPage =
         Html.div
         [ HA.class "suggestions-result"
         ]
-        (\suggestions ->
-            List.map
-                (\suggestion ->
-                    Html.li
-                        []
-                        [ Html.text suggestion ]
-                )
-                suggestions
-                |> Html.ul []
-                |> List.singleton
+        (\mbsuggestions ->
+            case mbsuggestions of
+                Nothing ->
+                    [ Html.div
+                        [ HA.class "state-empty" ]
+                        [ Html.text "Type to see suggestions..." ]
+                    ]
+
+                Just suggestions ->
+                    List.map
+                        (\suggestion ->
+                            Html.li
+                                []
+                                [ Html.text suggestion ]
+                        )
+                        suggestions
+                        |> Html.ul []
+                        |> List.singleton
         )
         searchPage.suggestions
     ]
@@ -473,12 +525,6 @@ view_State :
     -> Html msg
 view_State emptyNode htmlNode attr viewDone state =
     case state of
-        State.Empty ->
-            htmlNode
-                (HA.class "state-empty" :: attr)
-                [ emptyNode
-                ]
-
         State.Pending Nothing ->
             htmlNode
                 (HA.class "state-pending" :: attr)
@@ -494,11 +540,6 @@ view_State emptyNode htmlNode attr viewDone state =
                 (HA.class "state-error" :: attr)
                 [ Html.code [] [ Html.text ("Error: " ++ Debug.toString err) ]
                 ]
-
-        State.Stale staleValue ->
-            htmlNode
-                (HA.class "state-stale" :: attr)
-                (viewDone staleValue)
 
         State.Done value ->
             htmlNode

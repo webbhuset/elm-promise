@@ -8,6 +8,7 @@ import Html.Events as Events
 import Http
 import Process
 import Promise
+import Promise.ModelState as ModelState
 import Promise.Queue as Queue exposing (Queue)
 import Promise.State as State exposing (State)
 import Task exposing (Task)
@@ -62,19 +63,19 @@ type CartRequest
     = AddToCart
         { sku : String
         }
-        (State Http.Error Cart)
+        (ModelState.State Http.Error Cart)
     | ChangeQuantity
         { id : String
         , quantity : Int
         }
-        (State Http.Error Cart)
+        (ModelState.State Http.Error Cart)
     | Remove
         { id : String
         }
-        (State Http.Error Cart)
+        (ModelState.State Http.Error Cart)
 
 
-stateInResponse : CartRequest -> State Http.Error Cart
+stateInResponse : CartRequest -> ModelState.State Http.Error Cart
 stateInResponse cartRequest =
     case cartRequest of
         AddToCart _ state ->
@@ -103,22 +104,22 @@ processCartQueue model =
                                     |> List.foldl
                                         (\( _, req ) prevState ->
                                             case stateInResponse req of
-                                                State.Empty ->
-                                                    State.markStale prevState
+                                                ModelState.Empty ->
+                                                    ModelState.markStale prevState
 
-                                                State.Pending _ ->
-                                                    State.setPending prevState
+                                                ModelState.Pending _ ->
+                                                    ModelState.setPending prevState
 
-                                                State.Error _ ->
-                                                    State.toMaybe prevState
-                                                        |> Maybe.map State.Stale
+                                                ModelState.Error _ ->
+                                                    ModelState.toMaybe prevState
+                                                        |> Maybe.map ModelState.Stale
                                                         |> Maybe.withDefault prevState
 
-                                                State.Stale cart ->
-                                                    State.Stale cart
+                                                ModelState.Stale cart ->
+                                                    ModelState.Stale cart
 
-                                                State.Done cart ->
-                                                    State.Done cart
+                                                ModelState.Done cart ->
+                                                    ModelState.Done cart
                                         )
                                         model.cart
                           }
@@ -142,7 +143,7 @@ attemptCartRequest reqId cartRequest =
             sendToBackend reqId cartRequest
                 |> Promise.map
                     (\cmd ->
-                        ( AddToCart req (State.Pending Nothing)
+                        ( AddToCart req (ModelState.Pending Nothing)
                         , cmd
                         )
                     )
@@ -179,7 +180,7 @@ type Msg
 type alias Model =
     { products : List Product
     , cartQueue : Queue CartRequest
-    , cart : State Http.Error Cart
+    , cart : ModelState.State Http.Error Cart
     }
 
 
@@ -193,7 +194,7 @@ init flags =
         model =
             { products = Dict.values testProducts ++ [ { sku = "15-404", name = "Http Error 404", price = 49 } ]
             , cartQueue = Queue.empty "cart-request"
-            , cart = State.Empty
+            , cart = ModelState.Empty
             }
     in
     ( model
@@ -213,7 +214,7 @@ update msg model =
             { model
                 | cartQueue =
                     Queue.add
-                        (AddToCart { sku = sku } State.Empty)
+                        (AddToCart { sku = sku } ModelState.Empty)
                         model.cartQueue
             }
                 |> processCartQueue
@@ -243,7 +244,7 @@ respondUsingMockBackend model reqId request =
         AddToCart req _ ->
             case Dict.get req.sku testProducts of
                 Nothing ->
-                    State.Error (Http.BadStatus 404)
+                    ModelState.Error (Http.BadStatus 404)
                         |> AddToCart req
                         |> Task.succeed
                         |> Task.perform (GotCartResponse reqId)
@@ -255,7 +256,7 @@ respondUsingMockBackend model reqId request =
                                 let
                                     cart =
                                         model.cart
-                                            |> State.toMaybe
+                                            |> ModelState.toMaybe
                                             |> Maybe.withDefault { items = [] }
 
                                     existingItem =
@@ -291,19 +292,19 @@ respondUsingMockBackend model reqId request =
                                 { cart
                                     | items = newList
                                 }
-                                    |> State.Done
+                                    |> ModelState.Done
                                     |> AddToCart req
                             )
                         |> Task.perform (GotCartResponse reqId)
 
         ChangeQuantity req _ ->
-            State.Error (Http.BadStatus 500)
+            ModelState.Error (Http.BadStatus 500)
                 |> ChangeQuantity req
                 |> Task.succeed
                 |> Task.perform (GotCartResponse reqId)
 
         Remove req _ ->
-            State.Error (Http.BadStatus 500)
+            ModelState.Error (Http.BadStatus 500)
                 |> Remove req
                 |> Task.succeed
                 |> Task.perform (GotCartResponse reqId)
@@ -361,11 +362,11 @@ view_CartSummary model =
         [ HA.class "cart"
         ]
         [ Html.h2
-            [ HA.class (State.code model.cart)
+            [ HA.class (ModelState.code model.cart)
             ]
             [ Html.text "Shopping Cart" ]
         , model.cart
-            |> State.toMaybe
+            |> ModelState.toMaybe
             |> Maybe.map .items
             |> Maybe.withDefault []
             |> (\items ->
@@ -475,12 +476,11 @@ view_State :
     -> Html msg
 view_State emptyNode htmlNode attr viewDone state =
     case state of
-        State.Empty ->
-            htmlNode
-                (HA.class "state-empty" :: attr)
-                [ emptyNode
-                ]
-
+        -- State.Empty ->
+        --     htmlNode
+        --         (HA.class "state-empty" :: attr)
+        --         [ emptyNode
+        --         ]
         State.Pending Nothing ->
             htmlNode
                 (HA.class "state-pending" :: attr)
@@ -497,11 +497,10 @@ view_State emptyNode htmlNode attr viewDone state =
                 [ Html.code [] [ Html.text ("Error: " ++ Debug.toString err) ]
                 ]
 
-        State.Stale staleValue ->
-            htmlNode
-                (HA.class "state-stale" :: attr)
-                (viewDone staleValue)
-
+        -- State.Stale staleValue ->
+        --     htmlNode
+        --         (HA.class "state-stale" :: attr)
+        --         (viewDone staleValue)
         State.Done value ->
             htmlNode
                 (HA.class "state-done" :: attr)
